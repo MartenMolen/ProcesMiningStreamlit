@@ -23,13 +23,13 @@ if uploaded_file:
     # Filters
     with st.sidebar:
         st.header("🔍 Filters")
-        producties = df["DepartmentName"].dropna().unique().tolist()
+        producties = df["Department Name"].dropna().unique().tolist()
         afdelingen = st.multiselect("Afdelingen", producties, default=producties)
-        categorieen = df["Product category"].dropna().unique().tolist()
+        categorieen = df["Product Category"].dropna().unique().tolist()
         categorie_filter = st.multiselect("Productcategorieën", categorieen, default=categorieen)
 
-    filtered_df = df[(df["DepartmentName"].isin(afdelingen)) &
-                     (df["Product category"].isin(categorie_filter))]
+    filtered_df = df[(df["Department Name"].isin(afdelingen)) &
+                     (df["Product Category"].isin(categorie_filter))]
 
     # Procesedges maken
     filtered_df = filtered_df.dropna(subset=["Previous status Name", "Status measuring to name"])
