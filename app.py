@@ -32,14 +32,14 @@ if uploaded_file:
                      (df["Product Category"].isin(categorie_filter))]
 
     # Procesedges maken
-    filtered_df = filtered_df.dropna(subset=["Previous status Name", "Status measuring to name"])
-    transitions = filtered_df.groupby(["Previous status Name", "Status measuring to name"]).size().reset_index(name="Aantal")
+    filtered_df = filtered_df.dropna(subset=["Previous Status Name", "Status Measuring To Name"])
+    transitions = filtered_df.groupby(["Previous Status Name", "Status Measuring To Name"]).size().reset_index(name="Aantal")
 
     # Visualisatie bouwen
     st.subheader("📈 Procesdiagram")
     G = nx.DiGraph()
     for _, row in transitions.iterrows():
-        G.add_edge(row["Previous status Name"], row["Status measuring to name"], weight=row["Aantal"])
+        G.add_edge(row["Previous Status Name"], row["Status Measuring To Name"], weight=row["Aantal"])
 
     pos = nx.spring_layout(G, k=0.8, seed=42)
     edge_trace = []
