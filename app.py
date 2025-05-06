@@ -1,100 +1,87 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import networkx as nx
-from io import BytesIO
-from openai import OpenAI
+import openai
 
-# Configuratie
-st.set_page_config(page_title="Productieproces Visualisatie", layout="wide")
-st.title("🔄 Interactieve Process Mining App")
-st.markdown("Analyseer productieprocessen op basis van statusovergangen.")
+st.set_page_config(page_title="Procesvisualisatie", layout="wide")
+st.title("📊 Procesvisualisatie op basis van productiegegevens")
 
-# Bestand uploaden
+# Uploadbestand
 uploaded_file = st.file_uploader("Upload een Excel-bestand", type=[".xlsx"])
 
-@st.cache_data
-def load_data(file):
-    return pd.read_excel(file)
-
 if uploaded_file:
-    df = load_data(uploaded_file)
+    df = pd.read_excel(uploaded_file)
+
+    # Verwijder rijen met ontbrekende statussen
+    df = df.dropna(subset=["Previous Status Name", "Status Measuring To Name"])
 
     # Filters
     with st.sidebar:
         st.header("🔍 Filters")
-        producties = df["Department Name"].dropna().unique().tolist()
-        afdelingen = st.multiselect("Afdelingen", producties, default=producties)
-        categorieen = df["Product Category"].dropna().unique().tolist()
-        categorie_filter = st.multiselect("Productcategorieën", categorieen, default=categorieen)
+        product_filter = st.multiselect("Product", options=sorted(df["Product Name"].dropna().unique()))
+        category_filter = st.multiselect("Categorie", options=sorted(df["Product Category"].dropna().unique()))
+        department_filter = st.multiselect("Afdeling", options=sorted(df["Department Name"].dropna().unique()))
 
-    filtered_df = df[(df["Department Name"].isin(afdelingen)) &
-                     (df["Product Category"].isin(categorie_filter))]
+    # Pas filters toe
+    if product_filter:
+        df = df[df["Product Name"].isin(product_filter)]
+    if category_filter:
+        df = df[df["Product Category"].isin(category_filter)]
+    if department_filter:
+        df = df[df["Department Name"].isin(department_filter)]
 
-    # Procesedges maken
-    filtered_df = filtered_df.dropna(subset=["Previous Status Name", "Status Measuring To Name"])
-    transitions = filtered_df.groupby(["Previous Status Name", "Status Measuring To Name"]).size().reset_index(name="Aantal")
+    # Groepeer transities
+    transition_counts = (
+        df.groupby(["Previous Status Name", "Status Measuring To Name"])
+          .size()
+          .reset_index(name="Aantal")
+    )
 
-    # Visualisatie bouwen
-    st.subheader("📈 Procesdiagram")
-    G = nx.DiGraph()
-    for _, row in transitions.iterrows():
-        G.add_edge(row["Previous Status Name"], row["Status Measuring To Name"], weight=row["Aantal"])
+    # Maak unieke lijst van alle statussen
+    all_statuses = pd.unique(transition_counts[["Previous Status Name", "Status Measuring To Name"]].values.ravel())
+    status_index = {status: i for i, status in enumerate(all_statuses)}
 
-    pos = nx.spring_layout(G, k=0.8, seed=42)
-    edge_trace = []
-    for edge in G.edges(data=True):
-        x0, y0 = pos[edge[0]]
-        x1, y1 = pos[edge[1]]
-        trace = go.Scatter(x=[x0, x1, None], y=[y0, y1, None],
-                           line=dict(width=0.5 + edge[2]['weight']*0.1, color='#888'),
-                           hoverinfo='text', mode='lines',
-                           text=f"{edge[0]} → {edge[1]}: {edge[2]['weight']}")
-        edge_trace.append(trace)
+    # Vertaal naar indices voor Sankey
+    sources = transition_counts["Previous Status Name"].map(status_index)
+    targets = transition_counts["Status Measuring To Name"].map(status_index)
+    values = transition_counts["Aantal"]
 
-    node_trace = go.Scatter(x=[], y=[], text=[], mode='markers+text',
-                            textposition="bottom center",
-                            marker=dict(size=10, color='#00aaff'))
+    # Sankey diagram bouwen
+    fig = go.Figure(data=[
+        go.Sankey(
+            node=dict(
+                pad=15,
+                thickness=20,
+                line=dict(color="black", width=0.5),
+                label=list(status_index.keys()),
+                color="blue"
+            ),
+            link=dict(
+                source=sources,
+                target=targets,
+                value=values
+            )
+        )
+    ])
 
-    for node in G.nodes():
-        x, y = pos[node]
-        node_trace['x'] += (x,)
-        node_trace['y'] += (y,)
-        node_trace['text'] += (node,)
-
-    fig = go.Figure(data=edge_trace + [node_trace],
-                    layout=go.Layout(
-                        showlegend=False,
-                        hovermode='closest',
-                        margin=dict(b=20, l=5, r=5, t=40),
-                        xaxis=dict(showgrid=False, zeroline=False),
-                        yaxis=dict(showgrid=False, zeroline=False)))
-
+    fig.update_layout(title_text="Productieproces (Sankey-diagram)", font_size=12)
     st.plotly_chart(fig, use_container_width=True)
 
-    # Prompt interface
-    st.subheader("💬 Stel een vraag over je data")
-    vraag = st.text_input("Typ hier je vraag (bijv. 'Welke status wordt het vaakst overgeslagen?')")
+    # Promptveld
+    st.markdown("### 🤖 Stel een vraag over het proces")
+    prompt = st.text_input("Vraag (bijv. 'Welke stappen zijn het vaakst doorlopen?')")
 
-    if vraag:
-        try:
-            import openai
-            openai.api_key = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else "sk-...beperkt"
-            df_sample = filtered_df.head(500).to_csv(index=False)
-            prompt = f"""
-Jij bent een Nederlandstalige data-analist. Je bekijkt data van een productieproces. De gebruiker heeft deze data geüpload:
-{df_sample}
-
-Analyseer de volgende vraag: {vraag}
-Geef een kort en duidelijk antwoord in het Nederlands.
-"""
-            completion = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}]
-            )
-            antwoord = completion.choices[0].message['content']
-            st.success(antwoord)
-        except Exception as e:
-            st.error(f"Fout bij analyseren van vraag: {e}")
+    if prompt:
+        openai.api_key = st.secrets.get("OPENAI_API_KEY", "sk-...beperkt")
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "Je bent een data-analist die procesdata uitlegt."},
+                {"role": "user", "content": f"Analyseer het volgende proces: {transition_counts.to_string(index=False)}. Vraag: {prompt}"}
+            ]
+        )
+        antwoord = response.choices[0].message.content
+        st.markdown("#### 💡 Antwoord")
+        st.write(antwoord)
 else:
     st.info("📁 Upload een Excel-bestand om te beginnen.")
